@@ -290,6 +290,9 @@ regionUtils.geoJSON2regions = function (geoJSONObjects) {
         }
         regionUtils.addRegion(coordinates, regionId, hexColor, geoJSONObjClass);
         regionUtils._regions[regionId].regionName = regionName;
+        regionUtils._regions[regionId].show = false;
+        if(document.getElementById(regionId + "_show_ta"))
+                document.getElementById(regionId + "_show_ta").checked = false;
         regionobj = d3.select(canvas).append('g').attr('class', "mydrawingclass");
         var strokeWstr = regionUtils._polygonStrokeWidth / tmapp["ISS_viewer"].viewport.getZoom();
         regionobj.append('path').attr("d", regionUtils.pointsToPath(regionUtils._regions[regionId].points)).attr("id", regionId + "_poly")
@@ -308,6 +311,7 @@ regionUtils.geoJSON2regions = function (geoJSONObjects) {
 /** 
  * @param {List} points List of list of list of points representing a path
  * @summary Given points' coordinates, returns a path string */
+
 regionUtils.pointsToPath = function (points) {
     var path = "";
     points.forEach(function (subregions) {
@@ -372,6 +376,9 @@ regionUtils.addRegion = function (points, regionid, color, regionClass) {
         }
         region.points.push(subregion);
         region.globalPoints.push(globalSubregion);
+        
+        
+        
     }
     region._xmin = _xmin, region._xmax = _xmax, region._ymin = _ymin, region._ymax = _ymax;
     let tiledImage = viewer.world.getItemAt(0);
@@ -383,10 +390,12 @@ regionUtils.addRegion = function (points, regionid, color, regionClass) {
         _xmax,
         _ymax
     );
+    
     region._gxmin = _min_imageCoord.x, region._gxmax = _max_imageCoord.x, region._gymin = _min_imageCoord.y, region._gymax = _max_imageCoord.y;
     region.polycolor = color;
-
+    region.show = true;
     regionUtils._regions[regionid] = region;
+    
     regionUtils._regions[regionid].associatedPoints=[];
     regionUtils.regionUI(regionid);
 }
@@ -446,6 +455,24 @@ regionUtils.regionUI = function (regionid) {
     var tdPanel = HTMLElementUtils.createElement({
         kind: "td",
     });
+    console.log('making checkinput for show');
+    console.log(regionUtils._regions[regionid].show);
+    var checkinput1 = HTMLElementUtils.inputTypeCheckbox({
+        id: regionid + "_show_ta",
+        class: "form-check-input",
+        checked: regionUtils._regions[regionid].show,
+        value: regionUtils._regions[regionid].show,
+        eventListeners: { click: function () {
+            regionUtils._regions[regionid].show = this.checked;
+            regionUtils.showRegion(regionid, this.checked);
+        }}
+    });
+    tdPanel.appendChild(checkinput1);
+    trPanel.appendChild(tdPanel);
+    var tdPanel = HTMLElementUtils.createElement({
+        kind: "td",
+    });
+
     var checkinput = HTMLElementUtils.inputTypeCheckbox({
         id: regionid + "_fill_ta",
         class: "form-check-input",
@@ -527,11 +554,352 @@ regionUtils.regionUI = function (regionid) {
             class: "col btn btn-sm btn-primary form-control-sm mx-1"
         }
     });
+    
     regionsdeletebutton.addEventListener('click', function () {
         regionUtils.deleteRegion(regionid);
     });
     tdPanel.appendChild(regionsdeletebutton);
     trPanel.appendChild(tdPanel);
+    
+    
+    trPanel.appendChild(tdPanel);
+    var tdPanel = HTMLElementUtils.createElement({
+        kind: "td"
+    });
+    var regionssavebutton = HTMLElementUtils.createButton({
+        id: regionid + "_save_btn",
+        innerText: "Save",
+        extraAttributes: {
+            parentRegion: regionid,
+            class: "col btn btn-primary btn-sm form-control mx-1"
+                    
+        }
+    });
+    
+    regionssavebutton.addEventListener('click', function () {
+        var viewer = tmapp["ISS_viewer"]
+        var tiledImage = viewer.world.getItemAt(0);
+        
+        /**
+        * Added by GLB 7.26.23
+        */
+        saveRegion =function(regionid){
+            var reg =regionUtils._regions[regionid];
+            //_gxmin,_gxmax,_gymin,_gymax
+            var image_coords = new OpenSeadragon.Rect(reg._gxmin,
+                                          reg._gymin,
+                                          reg._gxmax-reg._gxmin,//width
+                                          reg._gymax-reg._gymin);//height
+            logRect(image_coords);
+            goDontSave(image_coords); 
+            var regionName = regionUtils._regions[regionid].regionName;
+            var regionClass = regionUtils._regions[regionid].regionClass;
+            savePNG(regionName,regionClass,image_coords)
+            
+            
+        }
+
+        goTo = function (viewport_rect) {
+            viewer.viewport.fitBounds(new //OpenSeadragon.Rect(rect.x-.01,rect.y-.01,rect.width+.02,rect.height+.02),true);
+            OpenSeadragon.Rect(viewport_rect.x,viewport_rect.y,viewport_rect.width,viewport_rect.height),true);
+        };
+
+        goDontSave = function(image_coords){
+            var viewportRect = tiledImage.imageToViewportRectangle(image_coords);
+            var viewportRect_expanded = tiledImage.imageToViewportRectangle(new OpenSeadragon.Rect(image_coords.x-20,image_coords.y-20,image_coords.width+40,image_coords.height+40));
+
+            goTo(viewportRect_expanded);
+        }
+
+        savePNG=function(regionName,regionClass,image_coords) {
+            return interfaceUtils.prompt("Resolution for export (1 = screen resolution):<br/>High resolution can take time to load!</small>","4","Capture viewport","number")
+            .then((resolution) => {
+                var old_bounds = tmapp.ISS_viewer.viewport.getBounds();
+                var loading=interfaceUtils.loadingModal();
+                tmapp.ISS_viewer.world.getItemAt(0).immediateRender = true
+                var strokeWidth = regionUtils._polygonStrokeWidth
+                regionUtils._polygonStrokeWidth *= resolution
+                overlayUtils.waitFullyLoaded().then(() => {
+                    getCanvasPNG(resolution,regionName,regionClass,image_coords)
+                    .then (() => {
+                        // We go back to original size:
+                        regionUtils._polygonStrokeWidth = strokeWidth;
+                        tmapp.ISS_viewer.world.getItemAt(0).immediateRender = false
+                        tmapp.ISS_viewer.viewport.fitBounds(old_bounds, true);
+                        setTimeout(()=>{$(loading).modal("hide");}, 300);
+
+                        document.getElementById("ISS_viewer").style.setProperty("visibility", "unset");
+                    })
+                });
+            })
+            
+        }
+
+         getCanvasPNG=function(tiling,regionName,regionClass,image_coords) {
+            tiling = tiling ? Math.ceil(tiling) : 1;
+            
+            function sleep (time) {
+                return new Promise((resolve) => setTimeout(resolve, time));
+            }
+            function getCanvasCtx_aux (index, size, ctx, bounds) {
+                return new Promise((resolve, reject) => {
+                    if (index == size*size) {
+                        resolve(ctx);
+                        return;
+                    }
+                    var index_x = index % size;
+                    var index_y = Math.floor(index/size);
+                    var newBounds = new OpenSeadragon.Rect(
+                        bounds.x+index_x*bounds.width/size,
+                        bounds.y+index_y*bounds.height/size,
+                        bounds.width/size,
+                        bounds.height/size,
+                        0
+                    );
+                    
+                    tmapp.ISS_viewer.viewport.fitBounds(newBounds, true);
+                    overlayUtils.waitFullyLoaded().then(() => {
+                        getCanvasCtx(newBounds,false).then ((ctx_offset) => {
+                            ctx.drawImage(
+                                ctx_offset.canvas, 
+                                ctx_offset.canvas.width * index_x, 
+                                ctx_offset.canvas.height * index_y, 
+                                ctx_offset.canvas.width,
+                                ctx_offset.canvas.height
+                            );
+                            setTimeout(() => {
+                                getCanvasCtx_aux(index+1, size, ctx, bounds).then(
+                                    (ctx)=>{
+                                        resolve(ctx);
+                                        return;
+                                    }
+
+                                )
+                            },200);
+                        });
+                    });
+                });
+            }
+
+            return new Promise((resolve, reject) => {
+                var viewportRect = tiledImage.imageToViewportRectangle(image_coords);
+                
+                if (tiling > 1) {
+                    var canvas = document.createElement("canvas");
+                    var ctx = canvas.getContext("2d");
+                    var ctx_osd = document.querySelector(".openseadragon-canvas canvas").getContext("2d");
+                    
+                    var ctx_webgl = document.querySelector("#gl_canvas").getContext("webgl2", 
+                                                                                    glUtils._options);
+                    
+                    var canvasRect_=tiledImage.viewportToImageRectangle(viewportRect);
+                    var canvasRect = new OpenSeadragon.Rect(Math.floor(canvasRect_.x),
+                                                          Math.floor(canvasRect_.y),
+                                                          Math.floor(canvasRect_.width),
+                                                          Math.floor(canvasRect_.height));
+                    
+                    canvas.width = Math.min(2000*tiling,Math.max(canvasRect.width,400));
+                    canvas.height = (canvasRect.height/canvasRect.width)*canvas.width;
+
+//                     console.log('tile>1'+'--'+canvas.width+'--'+canvas.height);
+                    var webRect = viewer.viewport.viewportToViewerElementRectangle(viewportRect);
+//                     var webRect = new OpenSeadragon.Rect(Math.floor(webRect_.x),
+//                                                               Math.floor(webRect_.y),
+//                                                               Math.floor(webRect_.width),
+//                                                          Math.floor(webRect_.height));
+                    const pixelDens = OpenSeadragon.pixelDensityRatio;
+                    var scalebar_scalar = ctx.canvas.width/webRect.width*pixelDens;
+                    var scalebarCanvas = getScalebarCanvas(true,scalebar_scalar);
+                    
+                    
+                    getCanvasCtx_aux(0, tiling, ctx, viewportRect).then((ctx_tiling) => {
+                        drawScalebarCanvas(ctx_tiling,scalebarCanvas);
+                        var png = ctx_tiling.canvas.toDataURL("image/png");
+
+                        var a = document.createElement("a"); //Create <a>
+                        a.href = png; //Image Base64 Goes here
+                        a.download = 'n-'+regionName+'-'+'c-'+regionClass+'_res'+tiling+"_capture.png"; //File name Here
+                        a.click(); //Downloaded file
+                        resolve(png);
+                    })
+                }
+                else {
+                    getCanvasCtx(viewportRect,true).then((ctx)  =>{
+                        var png = ctx.canvas.toDataURL("image/png");
+
+                        var a = document.createElement("a"); //Create <a>
+                        a.href = png; //Image Base64 Goes here
+                        a.download = 'n-'+regionName+'-'+'c-'+regionClass+'_res'+tiling+"_capture.png"; //File name Here
+                        a.click(); //Downloaded file
+                        resolve(png);
+                    })
+                }
+            })
+        }
+
+        logRect = function(bounds){};
+
+        getfitfontsize = function(divElt,max_height) {
+            //from https://stackoverflow.com/questions/20551534/size-to-fit-font-on-a-canvas#:~:text=You%20can%20use%20context.,font%20size%20until%20it%20fits.
+          // start with a small font size
+          var fontsize = 10;
+
+          // increase the font size until the text fits the canvas
+          do {
+            fontsize++;
+            
+            divElt.style.fontSize =fontsize+"px ";
+            var compStyle = window.getComputedStyle(divElt);
+//              console.log('sizes:'+divElt.style.fontSize+'.'+compStyle.getPropertyValue('font-size')+','+compStyle.getPropertyValue('line-height')+'-'+max_height);
+          } while (parseInt(compStyle.getPropertyValue('line-height'))< max_height)
+
+          return fontsize;
+          
+
+        }
+        getAsCanvasManual = function(scalebar,scalebar_scalar){
+            var canvas = document.createElement("canvas");
+            canvas.width = scalebar.divElt.offsetWidth*scalebar_scalar;
+            canvas.height = scalebar.divElt.offsetHeight*scalebar_scalar;
+            var context = canvas.getContext("2d");
+            var rescaled_barthickness = scalebar.barThickness*scalebar_scalar
+            context.fillStyle = scalebar.backgroundColor;
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.fillStyle = scalebar.color;
+            context.fillRect(0, canvas.height - (rescaled_barthickness),
+                    canvas.width, canvas.height);
+            if (this.drawScalebar === scalebar.drawMapScalebar) {
+                context.fillRect(0, 0, rescaled_barthickness, canvas.height);
+                context.fillRect(canvas.width - rescaled_barthickness, 0,
+                        rescaled_barthickness, canvas.height);
+            }
+            
+            var fontsize = getfitfontsize(scalebar.divElt,canvas.height)
+            scalebar.divElt.style.fontSize=fontsize+"px ";
+            context.font = window.getComputedStyle(scalebar.divElt).font;
+            context.textAlign = "center";
+            context.textBaseline = "middle";
+            context.fillStyle = scalebar.fontColor;
+            var hCenter = canvas.width / 2;
+            var vCenter = canvas.height / 2;
+
+//             var compStyle = window.getComputedStyle(scalebar.divElt);
+//             console.log(compStyle.getPropertyValue('font-size'));
+//             console.log(compStyle.getPropertyValue('line-height'));
+            context.fillText(scalebar.divElt.textContent, hCenter, vCenter);
+            return canvas;
+        }
+        
+        getScalebarCanvas = function(refresh,scalebar_scalar){
+            var scalebar = viewer.scalebarInstance;
+            if (scalebar == null){
+                return 'no-scalebar';
+            }
+            if (refresh){
+            scalebar.refresh();
+            }
+            
+            return  getAsCanvasManual(scalebar,scalebar_scalar);
+            
+        }
+
+        
+//         
+        drawScalebarCanvas = function(ctx,scalebarCanvas){
+            if (scalebarCanvas!='no-scalebar'){
+            
+//             var scalebar_scalar =canvasRect.width/webRect.width*pixelDens;
+            console.log('scalebar canvas'+scalebarCanvas.width+','+scalebarCanvas.height);
+            ctx.drawImage(scalebarCanvas,0,0,scalebarCanvas.width,//pixelDens?
+                         scalebarCanvas.height,ctx.canvas.width/25,ctx.canvas.width/25,
+                          scalebarCanvas.width,scalebarCanvas.height
+                         );
+            }
+//             ctx.drawImage(scalebarCanvas,0,0,scalebarCanvas.width,//pixelDens?
+//                          scalebarCanvas.height,ctx.canvas.width/25,ctx.canvas.width/25,
+//                          scalebarCanvas.width*scalebar_scalar,
+//                           scalebarCanvas.height*scalebar_scalar
+//                          );
+        }
+        getCanvasCtx=function(bounds,scalebar_yn) {
+            return new Promise((resolve, reject) => {
+                // Create an empty canvas element
+                var canvas = document.createElement("canvas");
+                var ctx_osd = document.querySelector(".openseadragon-canvas canvas").getContext("2d");
+                
+                
+                
+                
+                
+                var ctx_webgl = document.querySelector("#gl_canvas").getContext("webgl2", glUtils._options);
+
+        //         imageToViewportRectangle
+                var canvasRect_=tiledImage.viewportToImageRectangle(bounds);
+                var canvasRect = new OpenSeadragon.Rect(Math.floor(canvasRect_.x),
+                                                          Math.floor(canvasRect_.y),
+                                                          Math.floor(canvasRect_.width),
+                                                          Math.floor(canvasRect_.height));
+
+                var webRect = viewer.viewport.viewportToViewerElementRectangle(bounds);
+//                 var webRect = new OpenSeadragon.Rect(Math.floor(webRect_.x),
+//                                                           Math.floor(webRect_.y),
+//                                                           Math.floor(webRect_.width),
+//                                                      Math.floor(webRect_.height));
+
+
+                  //this is hacky: if scalebar=true, it means tiling =1
+                    // else means tiling >1 and you don't want to expand the canvas to the minimum value because it will take up too much space in the stitched image
+                var min_value = (scalebar_yn===true) ?  400 : canvasRect.width
+
+                canvas.width = Math.min(2000,Math.max(canvasRect.width,min_value));
+                canvas.height = (canvasRect.height/canvasRect.width)*canvas.width;
+                console.log('tile=1'+'--'+canvas.width+'--'+canvas.height);
+                // Copy the image contents to the canvas
+                var ctx = canvas.getContext("2d");
+                const pixelDens = OpenSeadragon.pixelDensityRatio;
+
+
+                ctx.drawImage(ctx_osd.canvas,webRect.x*pixelDens, webRect.y*pixelDens, webRect.width*pixelDens, webRect.height*pixelDens, 0, 0, canvas.width, canvas.height);
+                
+                ctx.drawImage(ctx_webgl.canvas,webRect.x*pixelDens, webRect.y*pixelDens, webRect.width*pixelDens, webRect.height*pixelDens, 0, 0, canvas.width, canvas.height);
+                if (scalebar_yn){
+                    var scalebar_scalar = ctx.canvas.width/webRect.width*pixelDens;
+                    var scalebarCanvas = getScalebarCanvas(true,scalebar_scalar);
+                    drawScalebarCanvas(ctx,scalebarCanvas);//addScalebar = function(ctx,scalar)
+//                     console.log('added scalebar---'+pixelDens+','+webRect.width);
+                }
+                var svgString = new XMLSerializer().serializeToString(document.querySelector('.openseadragon-canvas svg'));
+
+                var DOMURL = self.URL || self.webkitURL || self;
+                var img = new Image();
+                var svg = new Blob([svgString], {type: "image/svg+xml;charset=utf-8"});
+                var url = DOMURL.createObjectURL(svg);
+                img.onload = function() {
+                    ctx.drawImage(img, webRect.x*pixelDens, webRect.y*pixelDens, webRect.width*pixelDens, webRect.height*pixelDens, 0, 0,canvas.width, canvas.height);
+
+                    resolve(ctx);
+                    DOMURL.revokeObjectURL(url);
+                };
+                img.src = url;
+            })
+        }
+ 
+        var orig_show_value = regionUtils._regions[regionid].show
+        regionUtils.showRegion(regionid,false);
+        saveRegion(regionid)
+        document.getElementById(regionid + "_show_ta").checked = false
+        
+        
+        
+        
+        
+        
+      
+    });    
+    tdPanel.appendChild(regionssavebutton);
+    trPanel.appendChild(tdPanel);
+    
+    
     
     var trPanelHist = HTMLElementUtils.createElement({
         kind: "tr",
@@ -655,6 +1023,17 @@ regionUtils.fillAllRegions=function(){
         }
     }
 }
+/** Show all regions  */
+regionUtils.showAllRegions=function(){
+    var allShow = Object.values(regionUtils._regions).map(function(e) { return e.show; }).includes(false);
+    for(var regionid in regionUtils._regions){
+        if (regionUtils._regions.hasOwnProperty(regionid)) {
+            regionUtils.showRegion(regionid, allShow);
+            if(document.getElementById(regionid + "_show_ta"))
+                document.getElementById(regionid + "_show_ta").checked = allShow;
+        }
+    }
+}
 
 /** 
  * @param {String} regionid String id of region to fill
@@ -681,6 +1060,29 @@ regionUtils.fillRegion = function (regionid, value) {
         newStyle = "stroke: " + d3color.rgb().toString() + "; fill: none;";
     }
     document.getElementById(regionid + "_poly").setAttribute("style", newStyle);
+    regionUtils.showRegion(regionid,regionUtils._regions[regionid].show);
+
+}
+/** 
+ * @param {String} regionid String id of region to fill
+ * @summary Given a region id, fill this region in the interface */
+regionUtils.showRegion = function (regionid, value) {
+    if (value === undefined) {
+        // we toggle
+        if(regionUtils._regions[regionid].show === 'undefined'){
+            value = true;
+        }
+        else {
+            value = !regionUtils._regions[regionid].show;
+        }
+    }
+    regionUtils._regions[regionid].show=value;
+    
+    if (regionUtils._regions[regionid].show){
+            interfaceUtils.makeVisible(regionid + "_poly");
+    } else{
+        interfaceUtils.makeInvisible(regionid + "_poly");
+    }
 
 }
 /** 
@@ -699,6 +1101,10 @@ regionUtils.deleteRegion = function (regionid) {
     }
     regionUtils.updateAllRegionClassUI();
 }
+    
+
+
+
 /** 
  * @param {String} regionid String id of region to delete
  * @summary Given a region id, deletes this region in the interface */
@@ -803,16 +1209,19 @@ regionUtils.addRegionClassUI = function (regionClass) {
         });
         accordion_content.appendChild(regionTable);
         var colg=document.createElement ("colgroup");
-        colg.innerHTML='<col width="5%"><col width="38%"><col width="37%"><col width="10%"><col width="10%">';
+        colg.innerHTML='<col width="2%"><col width="2%"><col width="36%"><col width="37%"><col width="10%"><col width="10%">';
         regionTable.appendChild(colg);
         var tblHead = document.createElement("thead");
         var tblHeadTr = document.createElement("tr");
         tblHead.appendChild(tblHeadTr);
+        tblHeadTr.appendChild(HTMLElementUtils.createElement({kind:"th",innerText:"Show"}));
         tblHeadTr.appendChild(HTMLElementUtils.createElement({kind:"th",innerText:"Fill"}));
         tblHeadTr.appendChild(HTMLElementUtils.createElement({kind:"th",innerText:"Name"}));
         tblHeadTr.appendChild(HTMLElementUtils.createElement({kind:"th",innerText:"Class"}));
         tblHeadTr.appendChild(HTMLElementUtils.createElement({kind:"th",innerText:"Color"}));
         tblHeadTr.appendChild(HTMLElementUtils.createElement({kind:"th",innerText:"Delete"}));
+
+tblHeadTr.appendChild(HTMLElementUtils.createElement({kind:"th",innerText:"SavePNG"}));
         regionTable.appendChild(tblHead);
         var regionTbody = HTMLElementUtils.createElement({
             kind: "tbody",
@@ -828,7 +1237,28 @@ regionUtils.addRegionClassUI = function (regionClass) {
         var tdPanel = HTMLElementUtils.createElement({
             kind: "td",
         });
-        var checkinput = HTMLElementUtils.inputTypeCheckbox({
+        var checkinput1 = HTMLElementUtils.inputTypeCheckbox({
+            class: "form-check-input",
+            id: regionClassID + "_group_show_ta",
+            value: true,
+            eventListeners: { click: function () {
+                var newShow = this.checked;
+                groupRegions = Object.values(regionUtils._regions).filter(
+                    x => x.regionClass==regionClass
+                ).forEach(function (region) {
+                    region.show = newShow;
+                    if (document.getElementById(region.id + "_show_ta"))
+                        document.getElementById(region.id + "_show_ta").checked = newShow;
+                    regionUtils.showRegion(region.id, newShow);
+                });
+            }}
+        });
+        tdPanel.appendChild(checkinput1);
+        trPanel.appendChild(tdPanel);
+        var tdPanel = HTMLElementUtils.createElement({
+            kind: "td",
+        });
+        var checkinput2 = HTMLElementUtils.inputTypeCheckbox({
             class: "form-check-input",
             id: regionClassID + "_group_fill_ta",
             value: false,
@@ -844,7 +1274,7 @@ regionUtils.addRegionClassUI = function (regionClass) {
                 });
             }}
         });
-        tdPanel.appendChild(checkinput);
+        tdPanel.appendChild(checkinput2);
         trPanel.appendChild(tdPanel);
         
         var tdPanel = HTMLElementUtils.createElement({
@@ -988,6 +1418,7 @@ regionUtils.changeRegion = function (regionid) {
     regionUtils.updateRegionDraw(regionid);
 }
 
+
 /** 
  *  @param {String} regionid Region identifier
  *  @summary Change the region properties like color, class name or region name */
@@ -999,6 +1430,7 @@ regionUtils.changeRegion = function (regionid) {
     if (regionUtils._regions[regionid].filled === undefined)
         regionUtils._regions[regionid].filled = false;
     regionUtils.fillRegion(regionid, regionUtils._regions[regionid].filled);
+    regionUtils.showRegion(regionid, regionUtils._regions[regionid].show);
     if (regionUtils._regions[regionid].regionName) {rName = regionUtils._regions[regionid].regionName;}
     else {rName = regionid;}
     document.getElementById("path-title-" + regionid).innerHTML = rName;
@@ -1251,3 +1683,4 @@ regionUtils.JSONValToRegions= function(jsonVal){
     regionUtils.updateAllRegionClassUI();
     $('[data-bs-target="#markers-regions-project-gui"]').tab('show');
 }
+
